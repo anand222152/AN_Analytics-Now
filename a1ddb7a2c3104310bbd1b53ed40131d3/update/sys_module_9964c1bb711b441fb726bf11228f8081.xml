@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_module">
+    <sys_module action="INSERT_OR_UPDATE">
+        <content><![CDATA[{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "serialNumber": "urn:uuid:125b6a0c-2df7-4a76-bf4b-1dd48e9f0439",
+  "metadata": {
+    "timestamp": "2026-04-20T14:26:20.657Z",
+    "tools": {
+      "components": [
+        {
+          "type": "library",
+          "name": "sdk-build-plugins",
+          "group": "@servicenow",
+          "version": "4.6.0",
+          "author": "ServiceNow"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "name": "x-780831-analytics-no",
+      "version": "1.0.0",
+      "bom-ref": "pkg:servicenow/x-780831-analytics-no@1.0.0?sys_scope_id=a1ddb7a2c3104310bbd1b53ed40131d3",
+      "description": "[BUILD AGENT GENERATED]:  AI-powered reporting agent that converts natural language queries into ServiceNow data queries and returns meaningful analytical results",
+      "licenses": [
+        {
+          "license": {
+            "name": "UNLICENSED"
+          }
+        }
+      ],
+      "purl": "pkg:servicenow/x-780831-analytics-no@1.0.0?sys_scope_id=a1ddb7a2c3104310bbd1b53ed40131d3"
+    }
+  },
+  "components": [],
+  "dependencies": [
+    {
+      "ref": "pkg:servicenow/x-780831-analytics-no@1.0.0?sys_scope_id=a1ddb7a2c3104310bbd1b53ed40131d3"
+    }
+  ]
+}]]></content>
+        <external_source>false</external_source>
+        <path>x_780831_analytics/x-780831-analytics-no/1.0.0/bom.json</path>
+        <sys_class_name>sys_module</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-04-20 12:44:49</sys_created_on>
+        <sys_id>9964c1bb711b441fb726bf11228f8081</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_780831_analytics/x-780831-analytics-no/1.0.0/bom.json</sys_name>
+        <sys_package display_value="Analytics No" source="x_780831_analytics">a1ddb7a2c3104310bbd1b53ed40131d3</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Analytics No">a1ddb7a2c3104310bbd1b53ed40131d3</sys_scope>
+        <sys_update_name>sys_module_9964c1bb711b441fb726bf11228f8081</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-04-20 12:44:49</sys_updated_on>
+    </sys_module>
+</record_update>

@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_module">
+    <sys_module action="INSERT_OR_UPDATE">
+        <content><![CDATA[import { gs } from '@servicenow/glide'
+
+export class AnalyticsProcessor {
+    constructor() {
+        this.aiEnabled = gs.getProperty('x_780831_analytics.ai.enabled', 'false') === 'true'
+        this.aiProvider = gs.getProperty('x_780831_analytics.ai.provider', 'openai')
+        this.aiEndpoint = gs.getProperty('x_780831_analytics.ai.endpoint')
+        this.aiModel = gs.getProperty('x_780831_analytics.ai.model')
+        this.aiTimeout = parseInt(gs.getProperty('x_780831_analytics.ai.timeout', '30000'))
+    }
+
+    processQuery(naturalLanguageQuery) {
+        try {
+            gs.info('Analytics: Processing query - ' + naturalLanguageQuery)
+            
+            if (this.aiEnabled) {
+                return this._processWithAI(naturalLanguageQuery)
+            } else {
+                return this._processWithRules(naturalLanguageQuery)
+            }
+        } catch (ex) {
+            gs.error('AnalyticsProcessor error: ' + ex.message)
+            return this._getFallbackResult(naturalLanguageQuery, ex.message)
+        }
+    }
+
+    _processWithAI(query) {
+        try {
+            gs.info('Analytics: Using AI processing for query: ' + query)
+            
+            // Use the exact same pattern as your working test
+            const prompt = `Convert this natural language query to ServiceNow parameters: "${query}"
+
+Respond with valid JSON only:
+{
+  "table": "incident",
+  "encoded_query": "sys_created_on>=javascript:gs.dateGenerate(gs.nowDateTime(),-90*24*60*60*1000)",
+  "fields": ["number", "short_description", "state", "sys_created_on"],
+  "aggregates": ["count"],
+  "group_by": ["sys_created_on"],
+  "visualization": "line",
+  "limit": 100,
+  "description": "Shows incident trends over last 3 months"
+}`
+
+            const requestBody = {
+                model: this.aiModel,
+                messages: [
+                    { role: "user", content: prompt }
+                ]
+            }
+
+            gs.info('AN Analytics Request Body: ' + JSON.stringify(requestBody))
+
+            const request = new sn_ws.RESTMessageV2()
+            request.setHttpMethod('POST')
+            request.setEndpoint(this.aiEndpoint)
+            request.setRequestHeader('Content-Type', 'application/json')
+            // NO Authorization header - matching your working test
+            request.setRequestBody(JSON.stringify(requestBody))
+            
+            const response = request.execute()
+            const statusCode = response.getStatusCode()
+            
+            gs.info('AN Analytics Status: ' + statusCode)
+            gs.info('AN Analytics Response: ' + response.getBody())
+            
+            if (statusCode !== 200) {
+                const errorBody = response.getBody()
+                gs.error('Analytics: AI API error - Status: ' + statusCode + ', Body: ' + errorBody)
+                throw new Error('AI API error: ' + statusCode + ' - ' + errorBody)
+            }
+
+            const responseBody = response.getBody()
+            const responseData = JSON.parse(responseBody)
+            
+            if (!responseData.choices || !responseData.choices[0] || !responseData.choices[0].message) {
+                gs.error('Analytics: Invalid AI API response structure')
+                throw new Error('Invalid AI API response format')
+            }
+
+            const aiResponse = responseData.choices[0].message.content.trim()
+            gs.info('Analytics: AI response content: ' + aiResponse)
+            
+            // Clean up the response and extract JSON
+            let cleanResponse = aiResponse.replace(/```json\s*/, '').replace(/```\s*$/, '').trim()
+            
+            const jsonStart = cleanResponse.indexOf('{')
+            const jsonEnd = cleanResponse.lastIndexOf('}')
+            
+            if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+                cleanResponse = cleanResponse.substring(jsonStart, jsonEnd + 1)
+            }
+            
+            gs.info('Analytics: Parsing AI JSON: ' + cleanResponse)
+            
+            let result
+            try {
+                result = JSON.parse(cleanResponse)
+            } catch (parseError) {
+                gs.error('Analytics: JSON parsing failed, using rule-based fallback')
+                return this._processWithRules(query)
+            }
+            
+            // Validate and ensure required fields
+            result.table = result.table || 'incident'
+            result.encoded_query = result.encoded_query || ''
+            result.fields = result.fields || ['number', 'short_description', 'state', 'sys_created_on']
+            result.aggregates = result.aggregates || []
+            result.group_by = result.group_by || []
+            result.visualization = result.visualization || 'table'
+            result.limit = result.limit || 100
+            result.description = result.description || ('AI processed: ' + query)
+
+            gs.info('Analytics: AI processing successful - Table: ' + result.table)
+            return result
+
+        } catch (ex) {
+            gs.error('Analytics: AI processing failed: ' + ex.message + '. Using rule-based fallback.')
+            return this._processWithRules(query)
+        }
+    }
+
+    _processWithRules(query) {
+        gs.info('Analytics: Using rule-based processing for query: ' + query)
+        
+        const result = {
+            table: this._identifyTable(query),
+            encoded_query: this._buildEncodedQuery(query),
+            fields: [],
+            aggregates: [],
+            group_by: [],
+            visualization: 'table',
+            limit: 100,
+            description: ''
+        }
+        
+        result.fields = this._extractFields(query, result.table)
+        result.aggregates = this._detectAggregations(query)
+        result.group_by = this._detectGroupBy(query)
+        result.visualization = this._suggestVisualization(query, result.aggregates, result.group_by)
+        result.limit = this._extractLimit(query)
+        result.description = this._generateDescription(query, result)
+        
+        return result
+    }
+
+    _identifyTable(query) {
+        const lowerQuery = query.toLowerCase()
+        
+        if (lowerQuery.includes('incident')) return 'incident'
+        if (lowerQuery.includes('task')) return 'task' 
+        if (lowerQuery.includes('change')) return 'change_request'
+        if (lowerQuery.includes('problem')) return 'problem'
+        if (lowerQuery.includes('user') || lowerQuery.includes('person')) return 'sys_user'
+        if (lowerQuery.includes('ci') || lowerQuery.includes('configuration item')) return 'cmdb_ci'
+        
+        return 'incident' // default
+    }
+
+    _buildEncodedQuery(query) {
+        const conditions = []
+        const lowerQuery = query.toLowerCase()
+        
+        // Time filters - Enhanced for your "last 3 months" query
+        if (lowerQuery.includes('last 3 months') || lowerQuery.includes('past 3 months')) {
+            conditions.push('sys_created_on>=javascript:gs.dateGenerate(gs.nowDateTime(),-90*24*60*60*1000)')
+        } else if (lowerQuery.includes('last month')) {
+            conditions.push('sys_created_onONLast month')
+        } else if (lowerQuery.includes('this month')) {
+            conditions.push('sys_created_onONThis month')
+        } else if (lowerQuery.includes('last week')) {
+            conditions.push('sys_created_onONLast week')
+        } else if (lowerQuery.includes('this week')) {
+            conditions.push('sys_created_onONThis week')
+        } else if (lowerQuery.includes('today')) {
+            conditions.push('sys_created_onONToday')
+        }
+        
+        // State filters
+        if (lowerQuery.includes('new')) conditions.push('state=1')
+        if (lowerQuery.includes('in progress')) conditions.push('state=2')
+        if (lowerQuery.includes('resolved')) conditions.push('state=6')
+        if (lowerQuery.includes('closed')) conditions.push('state=7')
+        
+        // Priority filters
+        if (lowerQuery.includes('critical priority')) conditions.push('priority=1')
+        if (lowerQuery.includes('high priority')) conditions.push('priority=2')
+        if (lowerQuery.includes('moderate priority')) conditions.push('priority=3')
+        if (lowerQuery.includes('low priority')) conditions.push('priority=4')
+        
+        return conditions.join('^')
+    }
+
+    _extractFields(query, table) {
+        const baseFields = ['number', 'short_description', 'sys_created_on']
+        
+        if (table === 'incident' || table === 'task' || table === 'change_request' || table === 'problem') {
+            return [...baseFields, 'state', 'priority', 'assigned_to']
+        } else if (table === 'sys_user') {
+            return ['name', 'email', 'department', 'active', 'sys_created_on']
+        } else if (table === 'cmdb_ci') {
+            return ['name', 'operational_status', 'install_status', 'sys_created_on']
+        }
+        
+        return baseFields
+    }
+
+    _detectAggregations(query) {
+        const aggregates = []
+        const lowerQuery = query.toLowerCase()
+        
+        if (lowerQuery.includes('count') || lowerQuery.includes('how many') || lowerQuery.includes('trends')) {
+            aggregates.push('count')
+        }
+        if (lowerQuery.includes('sum') || lowerQuery.includes('total')) {
+            aggregates.push('sum')
+        }
+        if (lowerQuery.includes('average') || lowerQuery.includes('avg')) {
+            aggregates.push('avg')
+        }
+        
+        return aggregates
+    }
+
+    _detectGroupBy(query) {
+        const groupBy = []
+        const lowerQuery = query.toLowerCase()
+        
+        if (lowerQuery.includes('by state')) groupBy.push('state')
+        if (lowerQuery.includes('by priority')) groupBy.push('priority')
+        if (lowerQuery.includes('by assignee') || lowerQuery.includes('by assigned')) groupBy.push('assigned_to')
+        if (lowerQuery.includes('trend') || lowerQuery.includes('over time') || lowerQuery.includes('over last')) {
+            groupBy.push('sys_created_on')
+        }
+        
+        return groupBy
+    }
+
+    _suggestVisualization(query, aggregates, groupBy) {
+        const lowerQuery = query.toLowerCase()
+        
+        if (lowerQuery.includes('trend') || lowerQuery.includes('over time') || lowerQuery.includes('over last')) {
+            return 'line'
+        }
+        if (aggregates.length > 0 && groupBy.length > 0) {
+            return 'bar'
+        }
+        
+        return 'table'
+    }
+
+    _extractLimit(query) {
+        const limitMatch = query.match(/(?:top|first|limit)\s+(\d+)/i)
+        return limitMatch ? parseInt(limitMatch[1]) : 100
+    }
+
+    _generateDescription(query, result) {
+        let description = `Query: ${query} | Target: ${result.table}`
+        
+        if (result.aggregates.length > 0) {
+            description += ` | Aggregation: ${result.aggregates.join(', ')}`
+        }
+        if (result.group_by.length > 0) {
+            description += ` | Grouped by: ${result.group_by.join(', ')}`
+        }
+        
+        return description
+    }
+
+    _getFallbackResult(query, error) {
+        return {
+            table: 'incident',
+            encoded_query: '',
+            fields: ['number', 'short_description', 'state', 'sys_created_on'],
+            aggregates: [],
+            group_by: [],
+            visualization: 'table',
+            limit: 100,
+            description: `Error processing query: ${error}`,
+            error: error
+        }
+    }
+}]]></content>
+        <external_source>false</external_source>
+        <path>x_780831_analytics/x-780831-analytics-no/1.0.0/src/server/script-includes/analytics-processor.js</path>
+        <sys_class_name>sys_module</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-04-20 12:44:49</sys_created_on>
+        <sys_id>00d8c6d8ad2a43bca71b6533bea736ff</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_780831_analytics/x-780831-analytics-no/1.0.0/src/server/script-includes/analytics-processor.js</sys_name>
+        <sys_package display_value="Analytics No" source="x_780831_analytics">a1ddb7a2c3104310bbd1b53ed40131d3</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Analytics No">a1ddb7a2c3104310bbd1b53ed40131d3</sys_scope>
+        <sys_update_name>sys_module_00d8c6d8ad2a43bca71b6533bea736ff</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-04-20 12:44:49</sys_updated_on>
+    </sys_module>
+</record_update>

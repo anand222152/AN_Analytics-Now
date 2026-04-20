@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element audit="true" db_object_id="0613047ec3104310bbd1b53ed4013114" label="Analytics Query Result" max_length="40" name="x_780831_analytics_result" type="collection">
+        <element attributes="edge_encryption_enabled=true" display="true" label="Display Value" max_length="255" name="display_value" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="Result Data (JSON)" max_length="8000" name="result_data" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="Record Sys ID" max_length="32" name="record_sys_id" type="string"/>
+        <element default="0" label="Result Index" max_length="40" name="result_index" type="integer"/>
+        <element attributes="encode_utf8=false" label="Analytics Query" mandatory="true" max_length="32" name="query" reference="x_780831_analytics_query" type="reference"/>
+        <index name="index">
+            <element name="query"/>
+        </index>
+    </element>
+</database>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element audit="true" db_object_id="4a13c07ec3104310bbd1b53ed40131b4" label="Analytics Query" max_length="40" name="x_780831_analytics_query" type="collection">
+        <element attributes="edge_encryption_enabled=true" label="Target Table" max_length="80" name="table_name" type="string"/>
+        <element default="100" label="Result Limit" max_length="40" name="limit" type="integer"/>
+        <element attributes="edge_encryption_enabled=true" label="Group By (JSON)" max_length="500" name="group_by" type="string"/>
+        <element label="Query Successful" max_length="40" name="success" type="boolean"/>
+        <element attributes="edge_encryption_enabled=true" display="true" label="Natural Language Query" mandatory="true" max_length="4000" name="query_text" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="ServiceNow Encoded Query" max_length="4000" name="encoded_query" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="Query Description" max_length="1000" name="description" type="string"/>
+        <element attributes="edge_encryption_enabled=true" choice="1" default="table" label="Visualization Type" max_length="50" name="visualization" type="string">
+            <choice>
+                <element inactive_on_update="false" label="Table" sequence="0" value="table"/>
+                <element inactive_on_update="false" label="Line Chart" sequence="3" value="line"/>
+                <element inactive_on_update="false" label="Bar Chart" sequence="1" value="bar"/>
+                <element inactive_on_update="false" label="Pie Chart" sequence="2" value="pie"/>
+            </choice>
+        </element>
+        <element attributes="edge_encryption_enabled=true" label="Error Message" max_length="2000" name="error_message" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="Created By" max_length="80" name="created_by" type="string"/>
+        <element attributes="edge_encryption_enabled=true" label="Fields (JSON)" max_length="2000" name="fields" type="string"/>
+        <element label="Execution Time (ms)" max_length="40" name="execution_time" type="integer"/>
+        <element attributes="edge_encryption_enabled=true" label="Aggregates (JSON)" max_length="500" name="aggregates" type="string"/>
+        <element label="Result Count" max_length="40" name="result_count" type="integer"/>
+    </element>
+</database>

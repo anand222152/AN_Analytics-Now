@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?><database>
+    <element db_object_id="0213c07ec3104310bbd1b53ed4013178" label="Simple Test Table" max_length="40" name="x_780831_analytics_simple_test" type="collection">
+        <element attributes="edge_encryption_enabled=true" display="true" label="Test Field" max_length="100" name="test_field" type="string"/>
+    </element>
+</database>

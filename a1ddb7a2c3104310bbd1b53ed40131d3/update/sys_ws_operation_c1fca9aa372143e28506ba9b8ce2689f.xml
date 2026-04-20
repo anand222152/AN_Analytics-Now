@@ -1,0 +1,237 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_ws_operation">
+    <sys_ws_operation action="INSERT_OR_UPDATE">
+        <active>true</active>
+        <consumes>application/json</consumes>
+        <consumes_customized>false</consumes_customized>
+        <default_operation_uri/>
+        <enforce_acl>cf9d01d3e73003009d6247e603f6a990</enforce_acl>
+        <http_method>POST</http_method>
+        <name>Process Natural Language Query</name>
+        <operation_script><![CDATA[
+// Fixed: Handle object vs string from nextEntry()
+(function process(request, response) {
+    try {
+        gs.info('Analytics API: Request received');
+        
+        var query;
+        var requestData;
+        
+        // Method 1: Try hasNext/nextEntry (most reliable for ServiceNow)
+        if (request.body.hasNext && request.body.hasNext()) {
+            var bodyContent = request.body.nextEntry();
+            gs.info('Analytics API: NextEntry content type: ' + typeof bodyContent);
+            gs.info('Analytics API: NextEntry content: ' + JSON.stringify(bodyContent));
+            
+            if (typeof bodyContent === 'object') {
+                // It's already a parsed object, use it directly
+                requestData = bodyContent;
+                gs.info('Analytics API: Using object directly: ' + JSON.stringify(requestData));
+            } else if (typeof bodyContent === 'string') {
+                // It's a string, try to parse it
+                try {
+                    requestData = JSON.parse(bodyContent);
+                    gs.info('Analytics API: Parsed string to object: ' + JSON.stringify(requestData));
+                } catch (e) {
+                    gs.error('Analytics API: Failed to parse string body: ' + e.message);
+                    gs.info('Analytics API: Raw string was: ' + bodyContent);
+                }
+            }
+            
+            // Extract query from the data
+            if (requestData) {
+                if (requestData.data && requestData.data.query) {
+                    query = requestData.data.query;
+                    gs.info('Analytics API: Found query via data.query: ' + query);
+                } else if (requestData.query) {
+                    query = requestData.query;
+                    gs.info('Analytics API: Found query directly: ' + query);
+                }
+            }
+        }
+        
+        // Method 2: Try dataString as fallback
+        if (!query && request.body.dataString) {
+            var dataString = request.body.dataString;
+            gs.info('Analytics API: Trying dataString: ' + dataString);
+            
+            try {
+                var parsedData = JSON.parse(dataString);
+                query = parsedData.data ? parsedData.data.query : parsedData.query;
+                gs.info('Analytics API: DataString query extracted: ' + query);
+            } catch (e) {
+                gs.info('Analytics API: DataString parse failed: ' + e.message);
+            }
+        }
+        
+        gs.info('Analytics API: Final extracted query: ' + query);
+        
+        if (!query) {
+            gs.error('Analytics API: Could not extract query from request');
+            response.setStatus(400);
+            response.setBody({
+                success: false,
+                error: 'Could not extract query from request body',
+                debug: {
+                    body_type: typeof request.body,
+                    nextEntry_type: request.body.hasNext() ? typeof request.body.nextEntry() : 'no_entries',
+                    has_dataString: !!(request.body && request.body.dataString),
+                    requestData: requestData || 'none'
+                }
+            });
+            return;
+        }
+        
+        // Success! Now process the query and return real results
+        gs.info('Analytics API: Processing query: ' + query);
+        
+        // Simple processing for "Show incident trends over last 3 months"
+        var lowerQuery = query.toLowerCase();
+        var table = 'incident';
+        var encodedQuery = '';
+        var visualization = 'table';
+        var aggregates = [];
+        var groupBy = [];
+        
+        // Detect table
+        if (lowerQuery.indexOf('incident') !== -1) {
+            table = 'incident';
+        } else if (lowerQuery.indexOf('task') !== -1) {
+            table = 'task';
+        }
+        
+        // Detect time filter
+        if (lowerQuery.indexOf('last 3 months') !== -1 || lowerQuery.indexOf('past 3 months') !== -1) {
+            encodedQuery = 'sys_created_on>=javascript:gs.dateGenerate(gs.nowDateTime(),-90*24*60*60*1000)';
+        }
+        
+        // Detect trends
+        if (lowerQuery.indexOf('trend') !== -1) {
+            visualization = 'line';
+            aggregates = ['count'];
+            groupBy = ['sys_created_on'];
+        }
+        
+        var fields = ['number', 'short_description', 'state', 'sys_created_on'];
+        
+        // Save query to database
+        var queryGr = new GlideRecord('x_780831_analytics_query');
+        queryGr.initialize();
+        queryGr.setValue('query_text', query);
+        queryGr.setValue('table_name', table);
+        queryGr.setValue('encoded_query', encodedQuery);
+        queryGr.setValue('fields', JSON.stringify(fields));
+        queryGr.setValue('aggregates', JSON.stringify(aggregates));
+        queryGr.setValue('group_by', JSON.stringify(groupBy));
+        queryGr.setValue('visualization', visualization);
+        queryGr.setValue('limit', 100);
+        queryGr.setValue('description', 'Query: ' + query + ' | Target: ' + table + (aggregates.length > 0 ? ' | Aggregation: ' + aggregates.join(', ') : '') + (groupBy.length > 0 ? ' | Grouped by: ' + groupBy.join(', ') : ''));
+        queryGr.setValue('created_by', gs.getUserID());
+        
+        var startTime = new Date().getTime();
+        var results = [];
+        var resultCount = 0;
+        var success = true;
+        var errorMessage = '';
+        
+        try {
+            // Execute the query
+            gs.info('Analytics API: Executing query on table: ' + table + ' with filter: ' + encodedQuery);
+            
+            var gr = new GlideRecord(table);
+            if (encodedQuery) {
+                gr.addEncodedQuery(encodedQuery);
+            }
+            gr.orderByDesc('sys_created_on');
+            gr.setLimit(100);
+            gr.query();
+            
+            while (gr.next()) {
+                var record = {
+                    sys_id: gr.getUniqueValue(),
+                    number: gr.getDisplayValue('number'),
+                    short_description: gr.getDisplayValue('short_description'),
+                    state: gr.getDisplayValue('state'),
+                    sys_created_on: gr.getDisplayValue('sys_created_on')
+                };
+                
+                results.push(record);
+                resultCount++;
+            }
+            
+            gs.info('Analytics API: Query executed successfully, found ' + resultCount + ' records');
+            
+        } catch (ex) {
+            success = false;
+            errorMessage = 'Query execution error: ' + ex.message;
+            gs.error('Analytics API: Query execution error: ' + ex.message);
+        }
+        
+        var endTime = new Date().getTime();
+        var executionTime = endTime - startTime;
+        
+        // Update query record
+        queryGr.setValue('execution_time', executionTime);
+        queryGr.setValue('result_count', resultCount);
+        queryGr.setValue('success', success);
+        queryGr.setValue('error_message', errorMessage);
+        var queryId = queryGr.insert();
+        
+        gs.info('Analytics API: Saved query record with ID: ' + queryId);
+        
+        // Return response
+        response.setStatus(200);
+        response.setBody({
+            success: success,
+            query_id: queryId,
+            query_result: {
+                table: table,
+                encoded_query: encodedQuery,
+                fields: fields,
+                aggregates: aggregates,
+                group_by: groupBy,
+                visualization: visualization,
+                limit: 100,
+                description: 'Query: ' + query + ' | Target: ' + table + (aggregates.length > 0 ? ' | Aggregation: ' + aggregates.join(', ') : '') + (groupBy.length > 0 ? ' | Grouped by: ' + groupBy.join(', ') : '')
+            },
+            results: results,
+            result_count: resultCount,
+            execution_time: executionTime,
+            processing_method: 'Rule-based',
+            error: errorMessage || null
+        });
+        
+    } catch (ex) {
+        gs.error('Analytics API: Critical error: ' + ex.message);
+        response.setStatus(500);
+        response.setBody({
+            success: false,
+            error: ex.message
+        });
+    }
+})(request, response);
+]]></operation_script>
+        <operation_uri>/api/x_780831_analytics/analytics_now/query</operation_uri>
+        <produces>application/json</produces>
+        <produces_customized>false</produces_customized>
+        <relative_path>/query</relative_path>
+        <request_example/>
+        <requires_acl_authorization>false</requires_acl_authorization>
+        <requires_authentication>false</requires_authentication>
+        <requires_snc_internal_role>true</requires_snc_internal_role>
+        <short_description>Convert natural language query to ServiceNow data query and execute</short_description>
+        <sys_class_name>sys_ws_operation</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-04-20 12:44:51</sys_created_on>
+        <sys_id>c1fca9aa372143e28506ba9b8ce2689f</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>Process Natural Language Query</sys_name>
+        <sys_package display_value="Analytics No" source="x_780831_analytics">a1ddb7a2c3104310bbd1b53ed40131d3</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Analytics No">a1ddb7a2c3104310bbd1b53ed40131d3</sys_scope>
+        <sys_update_name>sys_ws_operation_c1fca9aa372143e28506ba9b8ce2689f</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-04-20 12:44:51</sys_updated_on>
+        <web_service_definition display_value="Analytics Now API">c0d87cd1eeca414886fe93d552831159</web_service_definition>
+        <web_service_version/>
+    </sys_ws_operation>
+</record_update>

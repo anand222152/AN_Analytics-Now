@@ -1,0 +1,207 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_module">
+    <sys_module action="INSERT_OR_UPDATE">
+        <content><![CDATA[// AI-Powered Analytics REST API Handler - Fixed query extraction
+(function process(request, response) {
+    try {
+        // Debug: Log the entire request to understand the structure
+        gs.info('Analytics API: Full request body: ' + JSON.stringify(request.body));
+        
+        var query;
+        
+        // Try different ways to extract the query
+        if (request.body && request.body.data && request.body.data.query) {
+            query = request.body.data.query;
+        } else if (request.body && request.body.query) {
+            query = request.body.query;
+        } else if (typeof request.body === 'string') {
+            // If body is a string, try to parse it
+            try {
+                var parsedBody = JSON.parse(request.body);
+                if (parsedBody.data && parsedBody.data.query) {
+                    query = parsedBody.data.query;
+                } else if (parsedBody.query) {
+                    query = parsedBody.query;
+                }
+            } catch (ex) {
+                gs.error('Analytics API: Failed to parse request body as JSON: ' + ex.message);
+            }
+        }
+        
+        gs.info('Analytics API: Extracted query - ' + query);
+        
+        if (!query) {
+            gs.error('Analytics API: No query found in request. Body structure: ' + JSON.stringify(request.body));
+            response.setStatus(400);
+            response.setBody({
+                success: false,
+                error: 'Query parameter is required. Expected format: {"data": {"query": "your query"}} or {"query": "your query"}',
+                debug: {
+                    received_body: request.body,
+                    body_type: typeof request.body
+                }
+            });
+            return;
+        }
+        
+        // Check AI configuration
+        var aiEnabled = gs.getProperty('x_780831_analytics.ai.enabled', 'false') === 'true';
+        var aiApiKey = gs.getProperty('x_780831_analytics.ai.api_key', '');
+        
+        gs.info('Analytics API: AI Enabled: ' + aiEnabled + ', API Key configured: ' + (aiApiKey ? 'Yes' : 'No'));
+        
+        // Use the AI-enhanced AnalyticsProcessor
+        var processor = new x_780831_analytics.AnalyticsProcessor();
+        var queryResult = processor.processQuery(query);
+        
+        gs.info('Analytics API: Processor returned - Table: ' + queryResult.table + ', Query: ' + queryResult.encoded_query);
+        
+        // Save query to database
+        var queryGr = new GlideRecord('x_780831_analytics_query');
+        queryGr.initialize();
+        queryGr.setValue('query_text', query);
+        queryGr.setValue('table_name', queryResult.table);
+        queryGr.setValue('encoded_query', queryResult.encoded_query);
+        queryGr.setValue('fields', JSON.stringify(queryResult.fields));
+        queryGr.setValue('aggregates', JSON.stringify(queryResult.aggregates));
+        queryGr.setValue('group_by', JSON.stringify(queryResult.group_by));
+        queryGr.setValue('visualization', queryResult.visualization);
+        queryGr.setValue('limit', queryResult.limit);
+        queryGr.setValue('description', queryResult.description);
+        queryGr.setValue('created_by', gs.getUserID());
+        
+        var startTime = new Date().getTime();
+        var results = [];
+        var resultCount = 0;
+        var success = true;
+        var errorMessage = '';
+        
+        try {
+            // Execute the query
+            gs.info('Analytics API: Executing query on table: ' + queryResult.table);
+            
+            var gr = new GlideRecord(queryResult.table);
+            if (queryResult.encoded_query) {
+                gs.info('Analytics API: Adding encoded query: ' + queryResult.encoded_query);
+                gr.addEncodedQuery(queryResult.encoded_query);
+            } else {
+                gs.info('Analytics API: No encoded query filters');
+            }
+            
+            gr.orderByDesc('sys_created_on');
+            gr.setLimit(queryResult.limit);
+            gr.query();
+            
+            while (gr.next()) {
+                var record = {};
+                
+                // Add all requested fields
+                for (var i = 0; i < queryResult.fields.length; i++) {
+                    var fieldName = queryResult.fields[i];
+                    if (gr.isValidField(fieldName)) {
+                        record[fieldName] = gr.getDisplayValue(fieldName);
+                        record[fieldName + '_raw'] = gr.getValue(fieldName);
+                    }
+                }
+                
+                record.sys_id = gr.getUniqueValue();
+                results.push(record);
+                resultCount++;
+            }
+            
+            gs.info('Analytics API: Query executed successfully, found ' + resultCount + ' records');
+            
+        } catch (ex) {
+            success = false;
+            errorMessage = 'Query execution error: ' + ex.message;
+            gs.error('Analytics API: Query execution error: ' + ex.message);
+        }
+        
+        var endTime = new Date().getTime();
+        var executionTime = endTime - startTime;
+        
+        // Update query record with results
+        queryGr.setValue('execution_time', executionTime);
+        queryGr.setValue('result_count', resultCount);
+        queryGr.setValue('success', success);
+        queryGr.setValue('error_message', errorMessage);
+        if (queryResult.error) {
+            queryGr.setValue('error_message', queryResult.error);
+        }
+        var queryId = queryGr.insert();
+        
+        gs.info('Analytics API: Saved query record with ID: ' + queryId);
+        
+        // Save individual results (limit to avoid performance issues)
+        var savedResults = 0;
+        for (var j = 0; j < results.length && j < 1000; j++) {
+            try {
+                var resultGr = new GlideRecord('x_780831_analytics_result');
+                resultGr.initialize();
+                resultGr.setValue('query', queryId);
+                resultGr.setValue('result_index', j + 1);
+                resultGr.setValue('record_data', JSON.stringify(results[j]));
+                resultGr.insert();
+                savedResults++;
+            } catch (ex) {
+                gs.warn('Analytics API: Failed to save result ' + j + ': ' + ex.message);
+            }
+        }
+        
+        gs.info('Analytics API: Saved ' + savedResults + ' result records');
+        
+        // Prepare response
+        var responseData = {
+            success: success,
+            query_id: queryId,
+            query_result: queryResult,
+            results: results.slice(0, 100), // Limit response size
+            result_count: resultCount,
+            execution_time: executionTime,
+            ai_enabled: aiEnabled,
+            processing_method: aiEnabled && aiApiKey ? 'AI' : 'Rule-based',
+            debug_info: {
+                ai_configured: aiEnabled && aiApiKey ? true : false,
+                table_used: queryResult.table,
+                encoded_query_used: queryResult.encoded_query || 'none',
+                fields_requested: queryResult.fields.length,
+                visualization_suggested: queryResult.visualization,
+                original_query: query
+            },
+            error: errorMessage || queryResult.error || null
+        };
+        
+        gs.info('Analytics API: Sending response - Success: ' + success + ', Records: ' + resultCount);
+        
+        response.setStatus(200);
+        response.setBody(responseData);
+        
+    } catch (ex) {
+        gs.error('Analytics API: Critical error: ' + ex.message);
+        response.setStatus(500);
+        response.setBody({
+            success: false,
+            error: 'Internal server error: ' + ex.message,
+            debug_info: {
+                error_type: 'critical_api_error',
+                timestamp: new GlideDateTime().toString(),
+                request_body: request.body
+            }
+        });
+    }
+})(request, response);]]></content>
+        <external_source>false</external_source>
+        <path>x_780831_analytics/x-780831-analytics-no/1.0.0/src/server/rest-apis/analytics-handler.js</path>
+        <sys_class_name>sys_module</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2026-04-20 13:02:54</sys_created_on>
+        <sys_id>eff49de5fc494b6fba93f7423bf8a90e</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_name>x_780831_analytics/x-780831-analytics-no/1.0.0/src/server/rest-apis/analytics-handler.js</sys_name>
+        <sys_package display_value="Analytics No" source="x_780831_analytics">a1ddb7a2c3104310bbd1b53ed40131d3</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Analytics No">a1ddb7a2c3104310bbd1b53ed40131d3</sys_scope>
+        <sys_update_name>sys_module_eff49de5fc494b6fba93f7423bf8a90e</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2026-04-20 13:02:54</sys_updated_on>
+    </sys_module>
+</record_update>
